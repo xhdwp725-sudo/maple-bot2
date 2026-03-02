@@ -4,7 +4,13 @@ import json
 import requests
 from typing import Any, Dict, List, Optional, Tuple
 
-TRADE_URL = "https://api.mapleland.gg/trade?itemCode=1050018&lowPrice=&highPrice=9999999999&lowincPDD=&highincPDD=&lowUpgrade=&highUpgrade=10&lowTuc=10&highTuc=10&hapStatsName=&lowHapStatsValue=0&highHapStatsValue=100"
+# ✅ Railway Variables에서 TRADE_URL을 넣으면 그걸 사용, 없으면 아래 기본값 사용
+DEFAULT_TRADE_URL = (
+    "https://api.mapleland.gg/trade?"
+    "itemCode=1050018&lowPrice=&highPrice=9999999999&lowincPDD=&highincPDD="
+    "&lowUpgrade=&highUpgrade=10&lowTuc=10&highTuc=10&hapStatsName=&lowHapStatsValue=0&highHapStatsValue=100"
+)
+TRADE_URL = os.getenv("TRADE_URL", DEFAULT_TRADE_URL).strip()
 
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "60"))
 PRICE_THRESHOLD = int(os.getenv("PRICE_THRESHOLD", "950000"))
@@ -28,7 +34,6 @@ def save_state(state: Dict[str, Any]) -> None:
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False)
     except Exception:
-        # Railway에서 디스크가 휘발될 수 있어도 동작은 계속
         pass
 
 
@@ -54,12 +59,7 @@ def fetch_trades() -> List[Dict[str, Any]]:
 
 
 def extract_side_price(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[int]]:
-    """
-    mapleland 응답 기준:
-      - 삽니다/팝니다: tradeType = "buy" / "sell"
-      - 가격: itemPrice
-    혹시 스키마가 바뀌거나 다른 필드가 오더라도 동작하도록 후보를 여러 개 둠.
-    """
+    # mapleland 응답 기준: tradeType("buy"/"sell"), itemPrice
     side_candidates = ["tradeType", "side", "type", "orderType", "direction", "isBuy"]
     price_candidates = ["itemPrice", "price", "min_price", "minPrice", "meso", "amount", "value"]
 
@@ -97,11 +97,8 @@ def extract_side_price(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[in
 
 
 def make_key(item: Dict[str, Any]) -> str:
-    # id가 있으면 가장 안정적
     if "id" in item:
         return f"id:{item['id']}"
-
-    # 그 외에는 해시로 중복 방지
     try:
         return "hash:" + str(hash(json.dumps(item, sort_keys=True, ensure_ascii=False)))
     except Exception:
@@ -110,8 +107,6 @@ def make_key(item: Dict[str, Any]) -> str:
 
 def format_message(item: Dict[str, Any], price: int) -> str:
     title = "메랜지지 알림: 삽니다 조건 감지"
-
-    # 필요한 핵심만
     item_name = item.get("itemName") or item.get("name") or ""
     trade_type = item.get("tradeType") or item.get("side") or item.get("type") or ""
     comment = item.get("comment") or ""
@@ -138,7 +133,6 @@ def main():
     state = load_state()
     notified = set(state.get("notified_keys", []))
 
-    # 시작 메시지
     tg_send("✅ 메랜 감시 봇 시작됨 (Railway)")
 
     while True:
@@ -147,12 +141,8 @@ def main():
 
             for it in items:
                 side, price = extract_side_price(it)
-
-                # 삽니다만
                 if side != "buy" or price is None:
                     continue
-
-                # 가격 조건
                 if price < PRICE_THRESHOLD:
                     continue
 
@@ -163,14 +153,12 @@ def main():
                 tg_send(format_message(it, price))
                 notified.add(key)
 
-            # 상태 저장(너무 커지면 최근 1000개만)
             if len(notified) > 1000:
                 notified = set(list(notified)[-1000:])
             state["notified_keys"] = list(notified)
             save_state(state)
 
         except Exception as e:
-            # 에러가 계속 나면 스팸이 될 수 있으니 간단히만
             try:
                 tg_send(f"⚠️ 에러: {type(e).__name__}: {e}")
             except Exception:
