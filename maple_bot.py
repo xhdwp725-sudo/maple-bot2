@@ -5,6 +5,7 @@ import requests
 from typing import Any, Dict, List, Optional, Tuple
 
 TRADE_URL = "https://api.mapleland.gg/trade?itemCode=1050018&lowPrice=&highPrice=9999999999&lowincPDD=&highincPDD=&lowUpgrade=&highUpgrade=10&lowTuc=10&highTuc=10&hapStatsName=&lowHapStatsValue=0&highHapStatsValue=100"
+
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "60"))
 PRICE_THRESHOLD = int(os.getenv("PRICE_THRESHOLD", "950000"))
 
@@ -27,6 +28,7 @@ def save_state(state: Dict[str, Any]) -> None:
         with open(STATE_FILE, "w", encoding="utf-8") as f:
             json.dump(state, f, ensure_ascii=False)
     except Exception:
+        # Railway에서 디스크가 휘발될 수 있어도 동작은 계속
         pass
 
 
@@ -52,8 +54,14 @@ def fetch_trades() -> List[Dict[str, Any]]:
 
 
 def extract_side_price(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[int]]:
-    side_candidates = ["side", "type", "tradeType", "orderType", "direction", "isBuy"]
-    price_candidates = ["price", "min_price", "minPrice", "meso", "amount", "value"]
+    """
+    mapleland 응답 기준:
+      - 삽니다/팝니다: tradeType = "buy" / "sell"
+      - 가격: itemPrice
+    혹시 스키마가 바뀌거나 다른 필드가 오더라도 동작하도록 후보를 여러 개 둠.
+    """
+    side_candidates = ["tradeType", "side", "type", "orderType", "direction", "isBuy"]
+    price_candidates = ["itemPrice", "price", "min_price", "minPrice", "meso", "amount", "value"]
 
     side_val = None
     for k in side_candidates:
@@ -70,9 +78,9 @@ def extract_side_price(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[in
     side_norm = None
     if isinstance(side_val, str):
         s = side_val.lower()
-        if "buy" in s:
+        if s == "buy" or "buy" in s:
             side_norm = "buy"
-        elif "sell" in s:
+        elif s == "sell" or "sell" in s:
             side_norm = "sell"
     elif isinstance(side_val, bool):
         side_norm = "buy" if side_val else None
@@ -89,25 +97,48 @@ def extract_side_price(item: Dict[str, Any]) -> Tuple[Optional[str], Optional[in
 
 
 def make_key(item: Dict[str, Any]) -> str:
+    # id가 있으면 가장 안정적
     if "id" in item:
         return f"id:{item['id']}"
-    return "hash:" + str(hash(json.dumps(item, sort_keys=True, ensure_ascii=False)))
+
+    # 그 외에는 해시로 중복 방지
+    try:
+        return "hash:" + str(hash(json.dumps(item, sort_keys=True, ensure_ascii=False)))
+    except Exception:
+        return "hash:fallback:" + str(time.time())
 
 
 def format_message(item: Dict[str, Any], price: int) -> str:
     title = "메랜지지 알림: 삽니다 조건 감지"
-    fields = []
-    for k in ("id", "name", "itemName", "count", "createdAt", "created_at"):
-        if k in item:
-            fields.append(f"{k}: {item.get(k)}")
-    fields_txt = "\n".join(fields) if fields else "(상세 필드 없음)"
-    return f"{title}\n가격: {price:,} 메소\n{fields_txt}"
+
+    # 필요한 핵심만
+    item_name = item.get("itemName") or item.get("name") or ""
+    trade_type = item.get("tradeType") or item.get("side") or item.get("type") or ""
+    comment = item.get("comment") or ""
+    created = item.get("created_at") or item.get("createdAt") or item.get("created") or ""
+    _id = item.get("id", "")
+
+    lines = [
+        title,
+        f"아이템: {item_name}",
+        f"종류: {trade_type}",
+        f"가격: {price:,} 메소",
+    ]
+    if _id != "":
+        lines.append(f"id: {_id}")
+    if created:
+        lines.append(f"created: {created}")
+    if comment:
+        lines.append(f"메모: {comment}")
+
+    return "\n".join(lines)
 
 
 def main():
     state = load_state()
     notified = set(state.get("notified_keys", []))
 
+    # 시작 메시지
     tg_send("✅ 메랜 감시 봇 시작됨 (Railway)")
 
     while True:
@@ -116,8 +147,12 @@ def main():
 
             for it in items:
                 side, price = extract_side_price(it)
+
+                # 삽니다만
                 if side != "buy" or price is None:
                     continue
+
+                # 가격 조건
                 if price < PRICE_THRESHOLD:
                     continue
 
@@ -128,12 +163,14 @@ def main():
                 tg_send(format_message(it, price))
                 notified.add(key)
 
+            # 상태 저장(너무 커지면 최근 1000개만)
             if len(notified) > 1000:
                 notified = set(list(notified)[-1000:])
             state["notified_keys"] = list(notified)
             save_state(state)
 
         except Exception as e:
+            # 에러가 계속 나면 스팸이 될 수 있으니 간단히만
             try:
                 tg_send(f"⚠️ 에러: {type(e).__name__}: {e}")
             except Exception:
