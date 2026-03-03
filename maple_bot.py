@@ -133,7 +133,7 @@ def main():
     state = load_state()
     notified = set(state.get("notified_keys", []))
 
-    tg_send("✅ 메랜 감시 봇 시작됨 (Railway)")
+tg_send(f"✅ 메랜 감시 봇 시작됨 (Railway)\nTRADE_URL itemCode 체크: {TRADE_URL.split('itemCode=')[1].split('&')[0] if 'itemCode=' in TRADE_URL else '없음'}")
 
     while True:
         try:
