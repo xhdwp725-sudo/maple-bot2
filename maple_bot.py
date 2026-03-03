@@ -8,7 +8,8 @@ from typing import Any, Dict, List, Optional, Tuple
 DEFAULT_TRADE_URL = (
     "https://api.mapleland.gg/trade?"
     "itemCode=1050018&lowPrice=&highPrice=9999999999&lowincPDD=&highincPDD="
-    "&lowUpgrade=&highUpgrade=10&lowTuc=10&highTuc=10&hapStatsName=&lowHapStatsValue=0&highHapStatsValue=100"
+    "&lowUpgrade=&highUpgrade=10&lowTuc=10&highUpgrade=10&lowTuc=10&highTuc=10"
+    "&hapStatsName=&lowHapStatsValue=0&highHapStatsValue=100"
 )
 TRADE_URL = os.getenv("TRADE_URL", DEFAULT_TRADE_URL).strip()
 
@@ -133,7 +134,11 @@ def main():
     state = load_state()
     notified = set(state.get("notified_keys", []))
 
-tg_send(f"✅ 메랜 감시 봇 시작됨 (Railway)\nTRADE_URL itemCode 체크: {TRADE_URL.split('itemCode=')[1].split('&')[0] if 'itemCode=' in TRADE_URL else '없음'}")
+    tg_send(
+        f"✅ 메랜 감시 봇 시작됨 (Railway)\n"
+        f"TRADE_URL itemCode 체크: "
+        f"{TRADE_URL.split('itemCode=')[1].split('&')[0] if 'itemCode=' in TRADE_URL else '없음'}"
+    )
 
     while True:
         try:
