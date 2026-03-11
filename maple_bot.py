@@ -8,13 +8,18 @@ from typing import Any, Dict, List, Optional, Tuple
 DEFAULT_TRADE_URL = (
     "https://api.mapleland.gg/trade?"
     "itemCode=1050018&lowPrice=&highPrice=9999999999&lowincPDD=&highincPDD="
-    "&lowUpgrade=&highUpgrade=10&lowTuc=10&highUpgrade=10&lowTuc=10&highTuc=10"
-    "&hapStatsName=&lowHapStatsValue=0&highHapStatsValue=100"
+    "&lowUpgrade=&highUpgrade=10&lowTuc=10&highTuc=10&hapStatsName=&lowHapStatsValue=0&highHapStatsValue=100"
 )
 TRADE_URL = os.getenv("TRADE_URL", DEFAULT_TRADE_URL).strip()
 
+# ✅ 폴링 주기(초)
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "60"))
-PRICE_THRESHOLD = int(os.getenv("PRICE_THRESHOLD", "950000"))
+
+# ✅ 알림 조건: SIDE + 가격 조건(이하)
+#   - TARGET_SIDE: buy / sell (기본 sell)
+#   - PRICE_MAX: 이 가격 "이하"일 때 알림 (기본 20,000,000)
+TARGET_SIDE = os.getenv("TARGET_SIDE", "sell").strip().lower()
+PRICE_MAX = int(os.getenv("PRICE_MAX", "20000000"))
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -106,10 +111,9 @@ def make_key(item: Dict[str, Any]) -> str:
         return "hash:fallback:" + str(time.time())
 
 
-def format_message(item: Dict[str, Any], price: int) -> str:
-    title = "메랜지지 알림: 삽니다 조건 감지"
+def format_message(item: Dict[str, Any], price: int, side: str) -> str:
+    title = "메랜지지 알림: 조건 감지"
     item_name = item.get("itemName") or item.get("name") or ""
-    trade_type = item.get("tradeType") or item.get("side") or item.get("type") or ""
     comment = item.get("comment") or ""
     created = item.get("created_at") or item.get("createdAt") or item.get("created") or ""
     _id = item.get("id", "")
@@ -117,7 +121,7 @@ def format_message(item: Dict[str, Any], price: int) -> str:
     lines = [
         title,
         f"아이템: {item_name}",
-        f"종류: {trade_type}",
+        f"종류: {side}",
         f"가격: {price:,} 메소",
     ]
     if _id != "":
@@ -135,9 +139,9 @@ def main():
     notified = set(state.get("notified_keys", []))
 
     tg_send(
-        f"✅ 메랜 감시 봇 시작됨 (Railway)\n"
-        f"TRADE_URL itemCode 체크: "
-        f"{TRADE_URL.split('itemCode=')[1].split('&')[0] if 'itemCode=' in TRADE_URL else '없음'}"
+        "✅ 메랜 감시 봇 시작됨 (Railway)\n"
+        f"모드: {TARGET_SIDE}\n"
+        f"가격 조건: {PRICE_MAX:,} 이하"
     )
 
     while True:
@@ -146,16 +150,20 @@ def main():
 
             for it in items:
                 side, price = extract_side_price(it)
-                if side != "buy" or price is None:
+
+                # ✅ 팝니다/삽니다 선택
+                if side != TARGET_SIDE or price is None:
                     continue
-                if price < PRICE_THRESHOLD:
+
+                # ✅ 가격 "이하" 조건
+                if price > PRICE_MAX:
                     continue
 
                 key = make_key(it)
                 if key in notified:
                     continue
 
-                tg_send(format_message(it, price))
+                tg_send(format_message(it, price, side))
                 notified.add(key)
 
             if len(notified) > 1000:
