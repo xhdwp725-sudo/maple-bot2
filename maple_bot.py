@@ -15,11 +15,13 @@ TRADE_URL = os.getenv("TRADE_URL", DEFAULT_TRADE_URL).strip()
 # ✅ 폴링 주기(초)
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "60"))
 
-# ✅ 알림 조건: SIDE + 가격 조건(이하)
-#   - TARGET_SIDE: buy / sell (기본 sell)
-#   - PRICE_MAX: 이 가격 "이하"일 때 알림 (기본 20,000,000)
+# ✅ 알림 모드: sell(팝니다) / buy(삽니다)
 TARGET_SIDE = os.getenv("TARGET_SIDE", "sell").strip().lower()
-PRICE_MAX = int(os.getenv("PRICE_MAX", "20000000"))
+
+# ✅ 가격 기준 (단일 기준)
+#   - sell 모드: 이 가격 "이하"일 때 알림
+#   - buy  모드: 이 가격 "이상"일 때 알림
+PRICE_THRESHOLD = int(os.getenv("PRICE_THRESHOLD", "20000000"))
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
@@ -134,14 +136,25 @@ def format_message(item: Dict[str, Any], price: int, side: str) -> str:
     return "\n".join(lines)
 
 
+def price_condition_ok(side: str, price: int) -> bool:
+    # ✅ sell: 이하, buy: 이상
+    if side == "sell":
+        return price <= PRICE_THRESHOLD
+    if side == "buy":
+        return price >= PRICE_THRESHOLD
+    return False
+
+
 def main():
     state = load_state()
     notified = set(state.get("notified_keys", []))
 
+    cond_txt = "sell이면 이하 / buy이면 이상"
     tg_send(
         "✅ 메랜 감시 봇 시작됨 (Railway)\n"
         f"모드: {TARGET_SIDE}\n"
-        f"가격 조건: {PRICE_MAX:,} 이하"
+        f"가격 기준: {PRICE_THRESHOLD:,}\n"
+        f"조건: {cond_txt}"
     )
 
     while True:
@@ -150,13 +163,10 @@ def main():
 
             for it in items:
                 side, price = extract_side_price(it)
-
-                # ✅ 팝니다/삽니다 선택
                 if side != TARGET_SIDE or price is None:
                     continue
 
-                # ✅ 가격 "이하" 조건
-                if price > PRICE_MAX:
+                if not price_condition_ok(side, price):
                     continue
 
                 key = make_key(it)
